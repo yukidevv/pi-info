@@ -5,8 +5,6 @@
 
 ![pi-info ダッシュボード](docs/screenshot.png)
 
-<sub>※ 上図は UI プレビューです。実機のスクリーンショットに差し替え可（`docs/screenshot.svg`）。</sub>
-
 - **バックエンド**: Python + FastAPI + psutil
 - **フロントエンド**: 素の HTML/JS（1.5秒ごとに自動更新、外部依存なし）
 - **配布**: Docker で内包（arm64/armv7 対応）
