@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / エディタ
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ローカル設定・秘密情報
+.env
+*.env
+!*.example.env

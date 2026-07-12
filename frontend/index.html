@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pi-info — システムモニタ</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #0e141b;
+      --fg: #d7dee6;
+      --dim: #5a6b7b;
+      --empty: #2a3644;
+      --green: #6fe36f;
+      --yellow: #f2d94e;
+      --red: #ff5f56;
+      --cyan: #56d1e0;
+      --magenta: #d18bff;
+      --hdr-bg: #1f8a3b;
+      --hdr-fg: #06110a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); }
+    body {
+      /* ブラケットメーターは桁揃えのため等幅必須。読みやすい等幅を優先。 */
+      font-family: "Cascadia Code", "Cascadia Mono", "SF Mono", "Source Code Pro",
+                   "Roboto Mono", "Noto Sans Mono", "DejaVu Sans Mono",
+                   "Liberation Mono", Menlo, Consolas, ui-monospace, monospace;
+      color: var(--fg);
+      font-size: 14.5px;
+      line-height: 1.62;
+      letter-spacing: 0.2px;
+      padding: 14px;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    .topbar { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .topbar .title { color: var(--green); font-weight: 700; }
+
+    .meters { display: flex; flex-wrap: wrap; gap: 4px 26px; margin-bottom: 12px; }
+    .col { flex: 1 1 340px; min-width: 300px; }
+    #col-left { flex-basis: 460px; }
+
+    /* メーター1行: キャプション [ バー ] */
+    .meter { white-space: nowrap; display: flex; align-items: baseline; }
+    .meter .cap { color: var(--cyan); text-align: right; flex: 0 0 auto; margin-right: 2px; }
+    #col-left .meter .cap { min-width: 4ch; }
+    #col-right .meter .cap { min-width: 6ch; }
+    .meter .cap.core { color: var(--dim); }
+
+    /* CPU コア別: CPU行の直下に 1行4コアのグリッド */
+    .cores { display: grid; grid-template-columns: repeat(4, max-content);
+             column-gap: 12px; margin: 1px 0 7px; overflow-x: auto; }
+    #col-left .cores .meter .cap { min-width: 2ch; }
+    .meter .br { color: var(--dim); }
+    .meter .bar { letter-spacing: 0; }
+    .meter .bar .f { }              /* 使用中セル（色は inline 指定） */
+    .meter .bar .e { color: var(--empty); }
+    .meter .bar .lf { font-weight: 700; }   /* バー上のラベル（使用域） */
+    .meter .bar .le { color: var(--dim); }   /* バー上のラベル（空き域） */
+
+    .info { color: var(--fg); }
+    .info .k { color: var(--cyan); }
+    .info .v { color: var(--fg); }
+    .info .warn { color: var(--yellow); }
+    .info .crit { color: var(--red); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="title">🍓 pi-info</span>
+  </div>
+
+  <div class="meters">
+    <div class="col" id="col-left"></div>
+    <div class="col" id="col-right"></div>
+  </div>
+
+  <script>
+    // ---------- フォーマッタ ----------
+    const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+    const pad = (s, n) => (s + "").padStart(n);
+
+    function fmtSize(b, digits = 1) {
+      const u = ["B", "K", "M", "G", "T"];
+      let i = 0, n = b;
+      while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return (i === 0 ? n.toFixed(0) : n.toFixed(n < 100 ? digits : 0)) + u[i];
+    }
+    const fmtRate = (bps) => fmtSize(bps) + "/s";
+
+    const z2 = (n) => (n + "").padStart(2, "0");   // ゼロ埋め2桁
+    function fmtUptime(s) {
+      s = Math.floor(s);
+      const h = Math.floor(s / 3600); s %= 3600;   // 24時間を超えても時に累積
+      const m = Math.floor(s / 60); const ss = s % 60;
+      return `${z2(h)}:${z2(m)}:${z2(ss)}`;
+    }
+
+    const meterColor = (f) => f >= 0.8 ? "var(--red)" : f >= 0.5 ? "var(--yellow)" : "var(--green)";
+
+    // ---------- メーター描画 ----------
+    const METER_W = 34; // 通常メーターのブラケット内文字数
+    const CORE_W = 8;   // コア別メーター（1行4コア）のブラケット内文字数（コンパクト）
+    // frac: 0..1, label: バー右側に重ねる文字列, color: 使用域の色, width: バー幅
+    function meterInner(frac, label, color, width = METER_W) {
+      frac = clamp(frac, 0, 1);
+      const filled = Math.round(frac * width);
+      const isLabel = new Array(width).fill(false);
+      const chars = new Array(width).fill("&nbsp;");
+      for (let i = 0; i < filled; i++) chars[i] = "|";
+      const start = width - label.length;
+      for (let i = 0; i < label.length; i++) {
+        const idx = start + i;
+        if (idx >= 0) { chars[idx] = label[i] === " " ? "&nbsp;" : label[i]; isLabel[idx] = true; }
+      }
+      let html = "";
+      for (let i = 0; i < width; i++) {
+        const inBar = i < filled;
+        if (isLabel[i]) {
+          html += inBar
+            ? `<span class="lf" style="color:${color}">${chars[i]}</span>`
+            : `<span class="le">${chars[i]}</span>`;
+        } else if (inBar) {
+          html += `<span class="f" style="color:${color}">${chars[i]}</span>`;
+        } else {
+          html += `<span class="e">${chars[i]}</span>`;
+        }
+      }
+      return html;
+    }
+    function meterRow(cap, capCls, frac, label, color, width = METER_W) {
+      return `<div class="meter"><span class="cap ${capCls}">${cap}</span>` +
+             `<span class="br">[</span><span class="bar">${meterInner(frac, label, color, width)}</span>` +
+             `<span class="br">]</span></div>`;
+    }
+
+    const peaks = {}; // 速度系メーターのピーク（追従スケール）
+    function ratePeak(key, v) {
+      const floor = 128 * 1024;
+      peaks[key] = Math.max(v, floor, (peaks[key] || floor) * 0.97);
+      return peaks[key];
+    }
+
+    // ---------- 全体描画 ----------
+    function render(d) {
+      // 左カラム: 全体CPU + Mem + Swp + Disk使用率
+      const capW = String(d.cpu.per_cpu.length - 1).length; // コア番号の桁
+      let left = "";
+      const cpuF = d.cpu.percent / 100;
+      left += meterRow("CPU", "", cpuF, `${d.cpu.percent.toFixed(1)}%`, meterColor(cpuF));
+      // CPU 行の直下にコア別グリッド（1行4コア・コンパクト幅）
+      left += `<div class="cores">`;
+      d.cpu.per_cpu.forEach((p, i) => {
+        const f = p / 100;
+        left += meterRow(pad(i, capW), "core", f, `${p.toFixed(0)}%`, meterColor(f), CORE_W);
+      });
+      left += `</div>`;
+      // バーの伸びはラベルの used/total と一致させる（percent はキャッシュを
+      // 空き扱いするため used/total とズレて見えるのを避ける）
+      const memF = d.memory.total ? d.memory.used / d.memory.total : 0;
+      left += meterRow("Mem", "", memF,
+        `${fmtSize(d.memory.used)}/${fmtSize(d.memory.total)}`, meterColor(memF));
+      const swF = d.memory.swap_total ? d.memory.swap_percent / 100 : 0;
+      left += meterRow("Swp", "", swF,
+        d.memory.swap_total ? `${fmtSize(d.memory.swap_used)}/${fmtSize(d.memory.swap_total)}` : "0K/0K",
+        meterColor(swF));
+      document.getElementById("col-left").innerHTML = left;
+
+      // 右カラム: テキスト情報 + ディスク/ネットワークIO メーター
+      const tmp = d.cpu.temp_c;
+      const tmpCls = tmp === null ? "" : tmp >= 75 ? "crit" : tmp >= 60 ? "warn" : "v";
+      const diskR = d.disk.read_bps, diskW = d.disk.write_bps;
+      const netR = d.network.recv_bps, netS = d.network.sent_bps;
+      let right = `<div class="info">` +
+        `<div><span class="k">Uptime:</span> <span class="v">${fmtUptime(d.uptime_sec)}</span></div>` +
+        `<div><span class="k">CPU temp:</span> <span class="${tmpCls}">${tmp === null ? "N/A" : tmp.toFixed(0) + "℃"}</span>` +
+        (d.cpu.freq_mhz ? ` <span class="v">· ${(d.cpu.freq_mhz / 1000).toFixed(2)}GHz</span>` : "") +
+        ` <span class="v">· ${d.cpu.count} cores</span></div>` +
+        `<div><span class="k">Mem free:</span> <span class="v">${fmtSize(d.memory.available)}</span> ` +
+        `<span class="k">Disk free:</span> <span class="v">${fmtSize(d.disk.free)}</span></div>` +
+        `</div>`;
+      right += `<div style="margin-top:6px">`;
+      right += meterRow("Disk R", "", diskR / ratePeak("dr", diskR), fmtRate(diskR), "var(--cyan)");
+      right += meterRow("Disk W", "", diskW / ratePeak("dw", diskW), fmtRate(diskW), "var(--magenta)");
+      right += meterRow("Net↓", "", netR / ratePeak("nr", netR), fmtRate(netR), "var(--green)");
+      right += meterRow("Net↑", "", netS / ratePeak("ns", netS), fmtRate(netS), "var(--cyan)");
+      right += `</div>`;
+      document.getElementById("col-right").innerHTML = right;
+    }
+
+    // 現在のページ位置を基準にした相対 API パス。
+    // サブパス配下（例 /pi/）にマウントしても壊れないようにする。
+    const API_BASE = location.pathname.replace(/[^/]*$/, "");
+
+    async function tick() {
+      try {
+        const res = await fetch(API_BASE + "api/metrics", { cache: "no-store" });
+        if (!res.ok) throw new Error(res.status);
+        render(await res.json());
+      } catch (e) {
+        // 取得失敗時は前回の表示を維持する
+      }
+    }
+
+    tick();
+    setInterval(tick, 1500);
+  </script>
+</body>
+</html>

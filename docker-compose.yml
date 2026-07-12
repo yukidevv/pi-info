@@ -1,0 +1,13 @@
+services:
+  pi-info:
+    build: .
+    container_name: pi-info
+    restart: unless-stopped
+    # ホストの実ネットワークカウンタ(eth0/wlan0 等)をそのまま取得するため host ネットワークを使用。
+    network_mode: host
+    environment:
+      - HOST=127.0.0.1
+      - PORT=8001
+    volumes:
+      # ラズパイの CPU 温度取得用（読み取り専用）
+      - /sys/class/thermal:/sys/class/thermal:ro
