@@ -41,14 +41,20 @@ docker compose down
 
 ### 待ち受け（HOST / PORT）
 
-環境変数 `HOST` / `PORT` で待ち受け先を変更できます（`docker-compose.yml` の
-既定は `127.0.0.1:8001`）。
+待ち受け先は `.env` で設定します（環境ごとに異なる値をリポジトリに載せないため）。
+`.env.example` をコピーして値を入れてください:
 
-- 既定は localhost のみ。LAN から直接開きたい場合は `HOST=0.0.0.0` に変更 →
-  `http://<ラズパイのIP>:8001`
-- `network_mode: host` のため `ports:` 指定は使いません。ポートは `PORT` で変更します。
+```bash
+cp .env.example .env
+# .env を編集: PI_INFO_HOST / PI_INFO_PORT
+```
+
+- 未設定なら **`127.0.0.1:8001`**（localhost のみ = LAN へ直接公開しない）。
+- 別コンテナの前段プロキシから届かせる場合は `PI_INFO_HOST` に docker ゲートウェイIP
+  （`docker inspect` で確認）を指定。手早く試すなら `0.0.0.0`。
+- `network_mode: host` のため `ports:` 指定は使いません。ポートは `PI_INFO_PORT` で変更します。
 - フロントの API 取得は表示中ページからの相対パスなので、サブパス配下
-  （`/pi/` 等）にマウントしても動作します。
+  （`/pi/` 等）にマウントしても動作します（末尾スラッシュ必須）。
 
 ### Docker 構成のポイント
 
@@ -109,6 +115,7 @@ pi-info/
 │   └── screenshot.svg   # README 用 UI プレビュー
 ├── Dockerfile
 ├── docker-compose.yml
+├── .env.example         # HOST/PORT の設定テンプレ（.env にコピーして使う）
 ├── .dockerignore
 ├── .gitignore
 └── README.md

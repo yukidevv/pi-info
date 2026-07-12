@@ -6,8 +6,11 @@ services:
     # ホストの実ネットワークカウンタ(eth0/wlan0 等)をそのまま取得するため host ネットワークを使用。
     network_mode: host
     environment:
-      - HOST=127.0.0.1
-      - PORT=8001
+      # バインド先とポートは .env で外出し（未設定なら localhost:8001）。
+      # 前段(別コンテナ)の Apache から届く docker ゲートウェイIP等を .env に書く。
+      # 実IPをリポジトリに載せないため .env は .gitignore 済み。.env.example 参照。
+      - HOST=${PI_INFO_HOST:-127.0.0.1}
+      - PORT=${PI_INFO_PORT:-8001}
     volumes:
       # ラズパイの CPU 温度取得用（読み取り専用）
       - /sys/class/thermal:/sys/class/thermal:ro
